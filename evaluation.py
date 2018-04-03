@@ -50,7 +50,7 @@ def model_run(model_name):
     for i in range(Epochs):#epoch
         pbar.update(1)
         model.norm_entity()
-        epoch_loss = 0.0
+        epoch_loss = torch.FloatTensor([0.0])
         for j,batch_samples in enumerate(train_loader):#batch
             optimizer.zero_grad()  # 每次迭代清空上一次的梯度
             p_score,n_score=model(batch_samples)
@@ -58,11 +58,11 @@ def model_run(model_name):
             #print('Epoch:', i, '|Step:', j, '|loss:', loss)
             loss.backward()
             optimizer.step()
-            epoch_loss+=loss
+            epoch_loss+=loss.data
 
             # print('loss:',loss.data.numpy(),'epoch loss:',epoch_loss.data.numpy())
         epoch_loss/=train_set.__len__()
-        print('Epoch:', i, 'epoch loss:', epoch_loss.data.numpy())
+        print('Epoch:', i, 'epoch loss:', epoch_loss.numpy())
         # if (i+1)%50==0:
         #     mean_rank,hit10=test_evaluate('TransE',Test_Data_path)
         # print('Epoch:', i, '|loss:', epoch_loss,'|test mean rank:',mean_rank,'|hit_10:',hit10)
@@ -78,9 +78,13 @@ def model_run(model_name):
 
 #model evaluate on test set
 def test_evaluate(model_name,Test_Data_path):
-    # transe=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
-    # transe.load_state_dict(torch.load('./models/transE_params.pkl'))#load model params
-    model=torch.load('./models/'+model_name+'.pkl') #load model and params into model
+    if model_name=='TransE':
+        model=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
+        model.load_state_dict(torch.load('./models/TransE_params.pkl'))#load model params
+    elif model_name=='TransH':
+        model=TransH(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
+        model.load_state_dict(torch.load('./models/TransH_params.pkl'))#load model params
+    # model=torch.load('./models/'+model_name+'.pkl') #load model and params into model
     test_set=load_test_set(Test_Data_path)
     mean_rank=0
     hit_10=0
@@ -177,6 +181,7 @@ class MyProcessTransE(multiprocessing.Process):
         L.append((hit10Count,totalRank,tripleCount))
 
 def evaluation_transE(testList,tripleDict,ent_embeddings,rel_embeddings,num_processes=multiprocessing.cpu_count()):
+    start_time=time.time()
     #split the testList into #num_processes parts
     len_split=math.ceil(len(testList)/num_processes)
     testListSplit=[testList[i:i+len_split] for i in range(0,len(testList),len_split)]
@@ -204,6 +209,8 @@ def evaluation_transE(testList,tripleDict,ent_embeddings,rel_embeddings,num_proc
     meanrank=sum(elem[1] for elem in resultList)/len(testList)
     print('Meanrank: %.6f'%meanrank)
     print('Hit@10: %.6f' %hit10)
+    end_time=time.time()
+    print('total time:',end_time-start_time)
 
     return hit10,meanrank
 #---------------testing-----------------------------------------------

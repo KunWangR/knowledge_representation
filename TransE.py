@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import torch.utils.data as data
 from tqdm import tqdm
 import numpy as np
+import time
 from sklearn.metrics import pairwise_distances
 from knowledge_representation.preprocessing import *
 from knowledge_representation.loss import marginLoss
@@ -17,8 +18,11 @@ margin=2
 learning_rate=0.01
 Epochs=20
 Train_Data_path='./data/WN18/train2id.txt'
-Test_Data_path='./data/WN18/test2id.csv'
+train_data_path='./data/WN18/train2id.csv'
+Test_Data_path='./data/WN18/test2id.txt'
+test_Data_path='./data/WN18/test2id.csv'
 Valid_Data_path='./data/WN18/valid2id.csv'
+valid_Data_path='./data/WN18/valid2id.txt'
 
 class TransE(nn.Module):
     def __init__(self,ent_num,rel_num,hidden_size,margin):
@@ -144,13 +148,25 @@ def train_transE_matual(Train_Data_path):
     torch.save(transE.state_dict(),'./models/TransE_params.pkl')# save only model params
     torch.save(transE,'./models/TransE.pkl')#save model and params
 
-def transE_evaluate(Test_Data_path):
-    # transe=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
-    # transe.load_state_dict(torch.load('./models/transE_params.pkl'))#load model params
-    model=torch.load('./models/TransE.pkl') #load model and params into model
-    test_set=load_test_set(Test_Data_path)
+
+def transE_evaluate_1by1_helper(Test_Data_path):
+    model=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
+    model.load_state_dict(torch.load('./models/transE_params.pkl'))#load model params
+    # model=torch.load('./models/TransE.pkl') #load model and params into model
+    ent_embeddings=model.ent_embedding.weight.data.numpy()
+    rel_embeddings=model.rel_embedding.weight.data.numpy()
+    testTotal,testList,testDict=load_triples(Test_Data_path)
+    return testList,model,ent_embeddings,rel_embeddings
+#evaluate transE on testset one by one
+def transE_evaluate_1by1_pred(testList,model):
+    start_time=time.time()
     mean_rank=0
     hit_10=0
+    test_set={}
+    test_set['p_h']=[triple[0] for triple in testList]
+    test_set['p_t']=[triple[1] for triple in testList]
+    test_set['p_r']=[triple[2] for triple in testList]
+
     for i,(h,t,r) in enumerate(zip(test_set['p_h'],test_set['p_t'],test_set['p_r'])):
         b_h=[int(h)]*entity_nums
         b_r=[int(r)]*entity_nums
@@ -168,35 +184,87 @@ def transE_evaluate(Test_Data_path):
     mean_rank/=len(test_set['p_h'])
     hit_10/=len(test_set['p_h'])
     print('mean_rank:',mean_rank,'|hit@10:',hit_10)
+    end_time=time.time()
+    print('total time:',end_time-start_time)
     return mean_rank,hit_10
 
+def transE_evaluate_1by1_emb(testList,ent_embeddiings,rel_embeddings):
+    start_time=time.time()
+    mean_rank=0
+    hit_10=0
+    test_set={}
+    test_set['p_h']=[triple[0] for triple in testList]
+    test_set['p_t']=[triple[1] for triple in testList]
+    test_set['p_r']=[triple[2] for triple in testList]
 
-def test_evaluate_allin(Test_Data_path):
-    testTotal,testList,testDict=load_triples(Test_Data_path)
+    for i,(h,t,r) in enumerate(zip(test_set['p_h'],test_set['p_t'],test_set['p_r'])):
+        b_h=ent_embeddiings[h]
+        b_r=rel_embeddings[r]
+        b_t_e=b_h+b_r
+        b_score=pairwise_distances(b_t_e.reshape(1, -1),ent_embeddiings,metric='manhattan',n_jobs=6)
+        # print('b_score:',b_score[0])
+        b_ranks=np.argsort(b_score[0])
+        # print('b_ranks:',b_ranks)
+        rank_t=int(np.argwhere(b_ranks==t))#
+        #print(i,'sample','|head:',h,'|tail:',t,'|r:',r,'|rank:',rank_t)
+        #print('|rank:',rank_t)
+        mean_rank+=rank_t+1
+        if rank_t<10:
+            hit_10+=1
+    mean_rank/=len(test_set['p_h'])
+    hit_10/=len(test_set['p_h'])
+    print('mean_rank:',mean_rank,'|hit@10:',hit_10)
+    end_time=time.time()
+    print('total time:',end_time-start_time)
+    return mean_rank,hit_10
+
+def transE_evaluate_allin_helper(Test_Data_path):
+    transE = TransE(ent_num=entity_nums, rel_num=relation_nums, hidden_size=hidden_size, margin=margin)  # init a model
+    transE.load_state_dict(torch.load('./models/transE_params.pkl'))  # load model params
+    # transE=torch.load('./models/transE.pkl')
+    ent_embeddings = transE.ent_embedding.weight.data.numpy()
+    rel_embeddings = transE.rel_embedding.weight.data.numpy()
+    testTotal, testList, testDict = load_triples(Test_Data_path)
+    return testList,ent_embeddings,rel_embeddings
+
+#evaluate transE with testset sample all in
+def transE_evaluate_allin(testList,ent_embeddings,rel_embeddings):
+    start=time.time()
+
     headList=[triple[0] for triple in testList]
     tailList=[triple[1] for triple in testList]
     relList=[triple[2] for triple in testList]
 
-    transE=torch.load('./models/transE.pkl')
-    ent_embeddings=transE.ent_embedding.weight.data.numpy()
-    rel_embeddings=transE.rel_embedding.weight.data.numpy()
-
     h_e=ent_embeddings[headList]
     t_e=ent_embeddings[tailList]
-    r_e=ent_embeddings[relList]
+    r_e=rel_embeddings[relList]
 
     c_t_e=h_e+r_e
     dist=pairwise_distances(c_t_e,ent_embeddings,metric='manhattan',n_jobs=6)
     rankArrayTail=np.argsort(dist,axis=1)
-    rankListTail=[int(np.argwhere(elem[0]==elem[1])) for elem in zip(tailList,rankArrayTail)]
+
+    rankListTail=[int(np.argwhere(elem[1]==elem[0])) for elem in zip(tailList,rankArrayTail)]
 
     isHit10ListTail=[x for x in rankListTail if x<10]
     totalRank=sum(rankListTail)
     hit10Count=len(isHit10ListTail)
     tripleCount=len(rankListTail)
 
-    print('mean rank:',totalRank/tripleCount,'hit10:',hit10Count/tripleCount)
-    
-
+    mean_rank=totalRank/tripleCount
+    hit_10=hit10Count/tripleCount
+    print('mean rank:',mean_rank,'hit10:',hit_10)
+    end=time.time()
+    print('all in total time:',end-start)
+    return mean_rank,hit_10
 # train_transE_matual(Train_Data_path)
-# transE_evaluate(Test_Data_path)
+
+# #evaluate transE one by one with model prediction
+testList,model,ent_embeddings,rel_embeddings=transE_evaluate_1by1_helper(Test_Data_path)
+# transE_evaluate_1by1_pred(testList,model)
+
+##evaluate transE one by one with embedding
+transE_evaluate_1by1_emb(testList,ent_embeddings,rel_embeddings)
+
+
+# testList,ent_embeddings,rel_embeddings=transE_evaluate_allin_helper(Test_Data_path)
+# transE_evaluate_allin(testList,ent_embeddings,rel_embeddings)

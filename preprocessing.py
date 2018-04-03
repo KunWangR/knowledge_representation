@@ -72,28 +72,28 @@ def neg_sample_gengeration(pos_sample,entity_num):
     pos_h=pos_sample[0]
     pos_t=pos_sample[1]
     pos_r=pos_sample[2]
-    h_t_choice=np.random.choice(2)
-    if h_t_choice==0:
+    h_t_choice=np.random.uniform()
+    if h_t_choice<0.5:
         neg_t=pos_t
         neg_r=pos_r
-        h=np.random.choice(entity_num)
+        h=np.random.randint(entity_num)
         while(h==pos_h):
-            h=np.random.choice(entity_num)
+            h=np.random.randint(entity_num)
         neg_h=h
     else:
         neg_h=pos_h
         neg_r=pos_r
-        t=np.random.choice(entity_num)
+        t=np.random.randint(entity_num)
         while(t==pos_t):
-            t=np.random.choice(entity_num)
+            t=np.random.randint(entity_num)
         neg_t=t
     sample={}
-    sample['p_h']=int(pos_h)
-    sample['p_t']=int(pos_t)
-    sample['p_r']=int(pos_r)
-    sample['n_h']=int(neg_h)
-    sample['n_t']=int(neg_t)
-    sample['n_r']=int(neg_r)
+    sample['p_h']=pos_h
+    sample['p_t']=pos_t
+    sample['p_r']=pos_r
+    sample['n_h']=neg_h
+    sample['n_t']=neg_t
+    sample['n_r']=neg_r
     return sample
 
 #load test set from file
@@ -107,10 +107,10 @@ def load_test_set(test_file):
 
 class Trainingset(data.Dataset):
     def __init__(self,file_path):
-        self.triples=pd.read_csv(file_path,sep=' ',encoding='utf-8',header=None)
+        self.tripleTotal,self.tripleList,self.tripleDict=load_triples(file_path)
 
     def __getitem__(self, index):
-        pos_sample=self.triples.iloc[index,:]
+        pos_sample=self.tripleList[index]
         sample=neg_sample_gengeration(pos_sample,entity_nums)
         return sample
 
