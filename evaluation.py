@@ -20,8 +20,8 @@ hidden_size=50
 margin=2
 learning_rate=0.01
 Epochs=10
-Train_Data_path='./data/WN18/train2id.csv'
-Test_Data_path='./data/WN18/test2id.csv'
+Train_Data_path='./data/WN18/train2id.txt'
+Test_Data_path='./data/WN18/test2id.txt'
 Valid_Data_path='./data/WN18/valid2id.csv'
 
 
@@ -142,9 +142,9 @@ def evaluation_transE_helper(testList,tripleDict,ent_embeddings,rel_embeddings,h
     #evaluate the prediction of only tail entity
     c_t_e=h_e+r_e
     dist=pairwise_distances(c_t_e,ent_embeddings,metric='manhattan')# default is euclidean
-    rankArrayTail=np.argsort(dict,axis=1)
+    rankArrayTail=np.argsort(dist,axis=1)
     rankListTail=[int(np.argwhere(elem[1]==elem[0])) for elem in zip(tail_list,rankArrayTail)]
-    isHit10ListTail=[x for x in rankArrayTail if x<10]
+    isHit10ListTail=[x for x in rankListTail if x<10]
     totalRank=sum(rankListTail)
     hit10Count=len(isHit10ListTail)
     tripleCount=len(rankListTail)
@@ -167,14 +167,14 @@ class MyProcessTransE(multiprocessing.Process):
                 self.process_data(testList,self.tripleDict,self.ent_embeddings,self.rel_embeddings,
                                   self.L)
             except:
-                time.sleeep(5)
+                time.sleep(5)
                 self.process_data(testList,self.tripleDict,self.ent_embeddings,self.rel_embeddings,
                                   self.L)
             self.queue.task_done()
 
     def process_data(self,testList,tripleDict,ent_embeddings,rel_embeddings,L):
         hit10Count,totalRank,tripleCount=evaluation_transE_helper(testList,tripleDict,ent_embeddings,rel_embeddings)
-        L.append(hit10Count,totalRank,tripleCount)
+        L.append((hit10Count,totalRank,tripleCount))
 
 def evaluation_transE(testList,tripleDict,ent_embeddings,rel_embeddings,num_processes=multiprocessing.cpu_count()):
     #split the testList into #num_processes parts
@@ -206,4 +206,14 @@ def evaluation_transE(testList,tripleDict,ent_embeddings,rel_embeddings,num_proc
     print('Hit@10: %.6f' %hit10)
 
     return hit10,meanrank
+#---------------testing-----------------------------------------------
+testTotal,testTripleList,testTripleDict=load_triples(Test_Data_path)
+transE=torch.load('./models/transE.pkl')
+ent_embeddings=transE.ent_embedding.weight.data.numpy()
+rel_embeddings=transE.rel_embedding.weight.data.numpy()
+evaluation_transE(testList=testTripleList,tripleDict=testTripleDict,
+                  ent_embeddings=ent_embeddings,rel_embeddings=rel_embeddings
+                  )
 
+
+#---------------------------------------------------------------

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import torch.utils.data as data
 from tqdm import tqdm
 import numpy as np
+from sklearn.metrics import pairwise_distances
 from knowledge_representation.preprocessing import *
 from knowledge_representation.loss import marginLoss
 entity_nums=40943
@@ -169,5 +170,33 @@ def transE_evaluate(Test_Data_path):
     print('mean_rank:',mean_rank,'|hit@10:',hit_10)
     return mean_rank,hit_10
 
-train_transE_matual(Train_Data_path)
-transE_evaluate(Test_Data_path)
+
+def test_evaluate_allin(Test_Data_path):
+    testTotal,testList,testDict=load_triples(Test_Data_path)
+    headList=[triple[0] for triple in testList]
+    tailList=[triple[1] for triple in testList]
+    relList=[triple[2] for triple in testList]
+
+    transE=torch.load('./models/transE.pkl')
+    ent_embeddings=transE.ent_embedding.weight.data.numpy()
+    rel_embeddings=transE.rel_embedding.weight.data.numpy()
+
+    h_e=ent_embeddings[headList]
+    t_e=ent_embeddings[tailList]
+    r_e=ent_embeddings[relList]
+
+    c_t_e=h_e+r_e
+    dist=pairwise_distances(c_t_e,ent_embeddings,metric='manhattan',n_jobs=6)
+    rankArrayTail=np.argsort(dist,axis=1)
+    rankListTail=[int(np.argwhere(elem[0]==elem[1])) for elem in zip(tailList,rankArrayTail)]
+
+    isHit10ListTail=[x for x in rankListTail if x<10]
+    totalRank=sum(rankListTail)
+    hit10Count=len(isHit10ListTail)
+    tripleCount=len(rankListTail)
+
+    print('mean rank:',totalRank/tripleCount,'hit10:',hit10Count/tripleCount)
+    
+
+# train_transE_matual(Train_Data_path)
+# transE_evaluate(Test_Data_path)
