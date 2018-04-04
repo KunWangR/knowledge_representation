@@ -1,6 +1,7 @@
 #-*- coding:utf-8 -*-
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.utils.data as data
@@ -16,13 +17,16 @@ relation_nums=18
 hidden_size=20
 margin=2
 learning_rate=0.01
-Epochs=20
+Epochs=1000
+Filter=False
+Early_Stopping_Round=30
+Triple_Data_path='./data/WN18/triple2id.txt'
 Train_Data_path='./data/WN18/train2id.txt'
 train_data_path='./data/WN18/train2id.csv'
 Test_Data_path='./data/WN18/test2id.txt'
 test_Data_path='./data/WN18/test2id.csv'
-Valid_Data_path='./data/WN18/valid2id.csv'
-valid_Data_path='./data/WN18/valid2id.txt'
+Valid_Data_path='./data/WN18/valid2id.txt'
+valid_Data_path='./data/WN18/valid2id.csv'
 
 class TransE(nn.Module):
     def __init__(self,ent_num,rel_num,hidden_size,margin):
@@ -87,30 +91,33 @@ class TransE(nn.Module):
         return p_score
 
 
-def train_transE(Train_Data_path):
-    train_set=Trainingset(Train_Data_path)
-    train_loader=data.DataLoader(train_set,batch_size=100,shuffle=True, num_workers=6)
+def train_transE(Triple_Data_path,Train_Data_path,usefilter):
+    train_set=Trainingset(Triple_Data_path,Train_Data_path,usefilter)
+    train_loader=data.DataLoader(train_set,batch_size=50,shuffle=True, num_workers=6)
     transE=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)
-    optimizer=torch.optim.SGD(transE.parameters(),lr=learning_rate)
+    optimizer=optim.SGD(transE.parameters(),lr=learning_rate)
     #loss
-    loss_func=torch.nn.MarginRankingLoss(margin,False)
-    y = Variable(torch.Tensor([-1]))
+    # loss_func=torch.nn.MarginRankingLoss(margin,False)
+    # y = Variable(torch.Tensor([-1]))
+    cretirion=marginLoss()
     # last_mean_rank=1000000
     pbar=tqdm(total=Epochs)
     for i in range(Epochs):#epoch
         transE.norm_entity()
         epoch_loss = torch.FloatTensor([0.0])
         for j,batch_samples in enumerate(train_loader):#batch
+            #print(batch_samples)
             optimizer.zero_grad()  # 每次迭代清空上一次的梯度
-            p_score,n_score=transE(batch_samples)
-            loss=loss_func(p_score,n_score,y)
+            p_score,n_score=transE.forward(batch_samples)
+            #loss=loss_func(p_score,n_score,y)
+            loss = cretirion.forward(p_score, n_score, margin)
             #print('Epoch:', i, '|Step:', j, '|loss:', loss)
             loss.backward()
             optimizer.step()
             epoch_loss+=loss.data
             # print('loss:',loss,'epoch loss:',epoch_loss)
+        epoch_loss/=train_set.__len__()
         print('epoch:', i, '|epoch loss:', epoch_loss.numpy())
-        epoch_loss/=torch.FloatTensor([train_set.__len__()])
         pbar.update(1)
         # if (i+1)%50==0:
         #     mean_rank,hit10=test_evaluate('TransE',Test_Data_path)
@@ -119,21 +126,32 @@ def train_transE(Train_Data_path):
     torch.save(transE.state_dict(),'./models/TransE_params.pkl')# save only model params
     torch.save(transE,'./models/TransE.pkl')#save model and params
 
-def train_transE_matual(Train_Data_path):
-    tripleTotal, tripleList, tripleDict=load_triples(Train_Data_path)
-    trainBatchList=getBatchList(tripleList,batch_nums)
+def train_transE_matual(Triple_Data_path,Train_Data_path,Valid_Data_path,Test_Data_path,usefilter):
+    tripleTotal,tripleList,tripleDict=load_triples(Triple_Data_path)
+
+    validTripleTotal,validTripleList,validTripleDict=load_triples(Valid_Data_path)
+
+    trainTripleTotal,trainTripleList,trainTripleDict =load_triples(Train_Data_path)
+
+    testTripleTotal, testTripleList, testTripleDict = load_triples(Test_Data_path)
+
+    trainBatchList=getBatchList(trainTripleList,batch_nums)
     transE=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)
     # cretirion=nn.MarginRankingLoss(margin,False)
     # y=Variable(torch.Tensor([-1]))
     cretirion=marginLoss()
     optimizer=torch.optim.SGD(transE.parameters(),lr=learning_rate)
-    pbar=tqdm(total=Epochs)
-    for epoch in range(Epochs):
+    pbar=tqdm(total=300)
+    early_stopping_round=0
+    for epoch in range(499,Epochs):
         transE.norm_entity()
         epoch_loss=torch.FloatTensor([0.0])
         random.shuffle(trainBatchList)
         for batchList in trainBatchList:
-            sample_batch=getBatch_raw_all(batchList,entity_nums)
+            if usefilter:
+                sample_batch=getBatch_filter_all(batchList,entity_nums,tripleDict)
+            else:
+                sample_batch=getBatch_raw_all(batchList,entity_nums)
             transE.zero_grad()
             p_score,n_score=transE(sample_batch)
             # loss=cretirion(p_score,n_score,y)
@@ -141,9 +159,34 @@ def train_transE_matual(Train_Data_path):
             loss.backward()
             optimizer.step()
             epoch_loss+=loss.data
-        epoch_loss/=torch.FloatTensor([tripleTotal])
+        epoch_loss/=torch.FloatTensor([trainTripleTotal])
         pbar.update(1)
-        print('epoch:',epoch,'|loss:',epoch_loss.numpy())
+        if epoch%10==0:
+            print('epoch:',epoch,'|loss:',epoch_loss.numpy())
+            if usefilter==True:
+                batch_samples=getBatch_filter_random(validTripleList,len(batchList),entity_nums,tripleDict)
+            else:
+                batch_samples=getBatch_raw_random(validTripleList, len(batchList), entity_nums)
+            pos_valid,neg_valid=transE(batch_samples)
+            #print(pos_valid,margin)
+            losses=cretirion(pos_valid,neg_valid,margin)
+            print('Epoch:',epoch,'|Valid batch loss:',losses.data.numpy())
+        if epoch>=499:
+            ent_embeddings=transE.ent_embedding.weight.data.numpy()
+            rel_embeddings=transE.rel_embedding.weight.data.numpy()
+            if epoch==499:
+                best_meanrank,hit_10=transE_evaluate_allin(validTripleList, ent_embeddings, rel_embeddings)
+
+            else:
+                now_meanrank,hit_10=transE_evaluate_allin(validTripleList, ent_embeddings, rel_embeddings)
+                if now_meanrank<best_meanrank:
+                    best_meanrank=now_meanrank
+                    test_meanrank,test_hit_10=transE_evaluate_allin(testTripleList,ent_embeddings,rel_embeddings)
+                    print('Epoch:',epoch,'|test mean rank:',test_meanrank,'|test hit@10:',test_hit_10)
+                else:
+                    early_stopping_round+=1
+            if early_stopping_round>=Early_Stopping_Round:
+                break
     pbar.close()
     torch.save(transE.state_dict(),'./models/TransE_params.pkl')# save only model params
     torch.save(transE,'./models/TransE.pkl')#save model and params
@@ -151,7 +194,7 @@ def train_transE_matual(Train_Data_path):
 
 def transE_evaluate_1by1_helper(Test_Data_path):
     model=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
-    model.load_state_dict(torch.load('./models/transE_params.pkl'))#load model params
+    model.load_state_dict(torch.load('./models/TransE_params.pkl'))#load model params
     # model=torch.load('./models/TransE.pkl') #load model and params into model
     ent_embeddings=model.ent_embedding.weight.data.numpy()
     rel_embeddings=model.rel_embedding.weight.data.numpy()
@@ -220,7 +263,7 @@ def transE_evaluate_1by1_emb(testList,ent_embeddiings,rel_embeddings):
 
 def transE_evaluate_allin_helper(Test_Data_path):
     transE = TransE(ent_num=entity_nums, rel_num=relation_nums, hidden_size=hidden_size, margin=margin)  # init a model
-    transE.load_state_dict(torch.load('./models/transE_params.pkl'))  # load model params
+    transE.load_state_dict(torch.load('./models/TransE_params.pkl'))  # load model params
     # transE=torch.load('./models/transE.pkl')
     ent_embeddings = transE.ent_embedding.weight.data.numpy()
     rel_embeddings = transE.rel_embedding.weight.data.numpy()
@@ -252,19 +295,20 @@ def transE_evaluate_allin(testList,ent_embeddings,rel_embeddings):
 
     mean_rank=totalRank/tripleCount
     hit_10=hit10Count/tripleCount
-    print('mean rank:',mean_rank,'hit10:',hit_10)
+    print('Test data --> mean rank:',mean_rank,'hit10:',hit_10)
     end=time.time()
     print('all in total time:',end-start)
     return mean_rank,hit_10
 # train_transE_matual(Train_Data_path)
 
 # #evaluate transE one by one with model prediction
-testList,model,ent_embeddings,rel_embeddings=transE_evaluate_1by1_helper(Test_Data_path)
+# testList,model,ent_embeddings,rel_embeddings=transE_evaluate_1by1_helper(Test_Data_path)
 # transE_evaluate_1by1_pred(testList,model)
 
 ##evaluate transE one by one with embedding
-transE_evaluate_1by1_emb(testList,ent_embeddings,rel_embeddings)
+# transE_evaluate_1by1_emb(testList,ent_embeddings,rel_embeddings)
 
-
-# testList,ent_embeddings,rel_embeddings=transE_evaluate_allin_helper(Test_Data_path)
-# transE_evaluate_allin(testList,ent_embeddings,rel_embeddings)
+train_transE(Triple_Data_path,Train_Data_path,Filter)
+#train_transE_matual(Triple_Data_path,Train_Data_path,Valid_Data_path,Test_Data_path,Filter)
+testList,ent_embeddings,rel_embeddings=transE_evaluate_allin_helper(Test_Data_path)
+transE_evaluate_allin(testList,ent_embeddings,rel_embeddings)

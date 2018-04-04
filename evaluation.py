@@ -22,7 +22,7 @@ learning_rate=0.01
 Epochs=10
 Train_Data_path='./data/WN18/train2id.txt'
 Test_Data_path='./data/WN18/test2id.txt'
-Valid_Data_path='./data/WN18/valid2id.csv'
+Valid_Data_path='./data/WN18/valid2id.txt'
 
 
 def model_init(model_name):
@@ -53,7 +53,7 @@ def model_run(model_name):
         epoch_loss = torch.FloatTensor([0.0])
         for j,batch_samples in enumerate(train_loader):#batch
             optimizer.zero_grad()  # 每次迭代清空上一次的梯度
-            p_score,n_score=model(batch_samples)
+            p_score,n_score=model.forward(batch_samples)
             loss=loss_func(p_score,n_score,y)
             #print('Epoch:', i, '|Step:', j, '|loss:', loss)
             loss.backward()
@@ -76,8 +76,8 @@ def model_run(model_name):
     torch.save(model.state_dict(),'./models/'+model_name+'_params.pkl')# save only model params
     torch.save(model,'./models/'+model_name+'.pkl')#save model and params
 
-#model evaluate on test set
-def test_evaluate(model_name,Test_Data_path):
+
+def test_evaluate_helper(model_name,TestData_path):
     if model_name=='TransE':
         model=TransE(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
         model.load_state_dict(torch.load('./models/TransE_params.pkl'))#load model params
@@ -85,9 +85,19 @@ def test_evaluate(model_name,Test_Data_path):
         model=TransH(ent_num=entity_nums,rel_num=relation_nums,hidden_size=hidden_size,margin=margin)#init a model
         model.load_state_dict(torch.load('./models/TransH_params.pkl'))#load model params
     # model=torch.load('./models/'+model_name+'.pkl') #load model and params into model
-    test_set=load_test_set(Test_Data_path)
+    tripleTotal,tripleList,tripleDict=load_triples(TestData_path)
+    return tripleList,model
+
+
+#model evaluate on test set
+def test_evaluate(tripleList,model):
     mean_rank=0
     hit_10=0
+    test_set={}
+    test_set['p_h']=[triple[0] for triple in tripleList]
+    test_set['p_t']=[triple[1] for triple in tripleList]
+    test_set['p_r']=[triple[2] for triple in tripleList]
+
     for i,(h,t,r) in enumerate(zip(test_set['p_h'],test_set['p_t'],test_set['p_r'])):
         b_h=[int(h)]*entity_nums
         b_r=[int(r)]*entity_nums
@@ -130,7 +140,6 @@ def evaluation_TransH(model_path,testList,tripleDict,head=0):
     t_e=ent_embeddings[tail_list]
     r_e=rel_embeddings[rel_list]
 
-    
 
 #------------------multiprocess for transE evaluation---------------------------------------------
 def evaluation_transE_helper(testList,tripleDict,ent_embeddings,rel_embeddings,head=0):
@@ -213,14 +222,14 @@ def evaluation_transE(testList,tripleDict,ent_embeddings,rel_embeddings,num_proc
     print('total time:',end_time-start_time)
 
     return hit10,meanrank
-#---------------testing-----------------------------------------------
-testTotal,testTripleList,testTripleDict=load_triples(Test_Data_path)
-transE=torch.load('./models/transE.pkl')
-ent_embeddings=transE.ent_embedding.weight.data.numpy()
-rel_embeddings=transE.rel_embedding.weight.data.numpy()
-evaluation_transE(testList=testTripleList,tripleDict=testTripleDict,
-                  ent_embeddings=ent_embeddings,rel_embeddings=rel_embeddings
-                  )
+#---------------testing for multi progress-----------------------------------------------
+# testTotal,testTripleList,testTripleDict=load_triples(Test_Data_path)
+# transE=torch.load('./models/transE.pkl')
+# ent_embeddings=transE.ent_embedding.weight.data.numpy()
+# rel_embeddings=transE.rel_embedding.weight.data.numpy()
+# evaluation_transE(testList=testTripleList,tripleDict=testTripleDict,
+#                   ent_embeddings=ent_embeddings,rel_embeddings=rel_embeddings
+#                   )
 
 
-#---------------------------------------------------------------
+#----------------testing for overwriting data loader-----------------------------------------------

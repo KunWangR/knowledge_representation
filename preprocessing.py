@@ -57,7 +57,7 @@ def load_train_set(train_file,entity_num):
             p_r.append(r)
     n_h=p_h
     n_r=p_r
-    n_t=neg_t_generation(p_t,entity_num)
+    n_t=neg_t_generation_raw(p_t,entity_num)
     train_set.append(p_h)
     train_set.append(p_t)
     train_set.append(p_r)
@@ -68,24 +68,56 @@ def load_train_set(train_file,entity_num):
     return train_num,train_set
 
 #negtive sample generation with positive sample
-def neg_sample_gengeration(pos_sample,entity_num):
+def neg_sample_gengeration_raw(pos_sample,entity_num):
     pos_h=pos_sample[0]
     pos_t=pos_sample[1]
     pos_r=pos_sample[2]
     h_t_choice=np.random.uniform()
     if h_t_choice<0.5:
-        neg_t=pos_t
-        neg_r=pos_r
-        h=np.random.randint(entity_num)
-        while(h==pos_h):
+        neg_t=pos_sample[1]
+        neg_r=pos_sample[2]
+        while True:
             h=np.random.randint(entity_num)
+            if h!=pos_h:
+                break
         neg_h=h
     else:
-        neg_h=pos_h
-        neg_r=pos_r
-        t=np.random.randint(entity_num)
-        while(t==pos_t):
+        neg_h=pos_sample[0]
+        neg_r=pos_sample[2]
+        while True:
             t=np.random.randint(entity_num)
+            if t!=pos_t:
+                break
+        neg_t=t
+    sample={}
+    sample['p_h']=pos_h
+    sample['p_t']=pos_t
+    sample['p_r']=pos_r
+    sample['n_h']=neg_h
+    sample['n_t']=neg_t
+    sample['n_r']=neg_r
+    return sample
+
+def neg_sample_gengeration_filter(pos_sample,entity_num,tripleDict):
+    pos_h=pos_sample[0]
+    pos_t=pos_sample[1]
+    pos_r=pos_sample[2]
+    h_t_choice=np.random.uniform()
+    if h_t_choice<0.5:
+        neg_t=pos_sample[1]
+        neg_r=pos_sample[2]
+        while True:
+            h=np.random.randint(entity_num)
+            if (h,neg_t,neg_r) not in tripleDict:
+                break
+        neg_h=h
+    else:
+        neg_h=pos_sample[0]
+        neg_r=pos_sample[2]
+        while True:
+            t=np.random.randint(entity_num)
+            if (neg_h,t,neg_r) not in tripleDict:
+                break
         neg_t=t
     sample={}
     sample['p_h']=pos_h
@@ -106,17 +138,22 @@ def load_test_set(test_file):
     return test_set
 
 class Trainingset(data.Dataset):
-    def __init__(self,file_path):
-        self.tripleTotal,self.tripleList,self.tripleDict=load_triples(file_path)
-
+    def __init__(self,triple_file_path,train_file_path,filter=True):
+        tripleTotal,tripleList,self.tripleDict=load_triples(triple_file_path)
+        del tripleTotal,tripleList
+        trainTripleTotal,self.TrainTripleList,trainTripleDict=load_triples(train_file_path)
+        del trainTripleTotal,trainTripleDict
+        self.filter=filter
     def __getitem__(self, index):
-        pos_sample=self.tripleList[index]
-        sample=neg_sample_gengeration(pos_sample,entity_nums)
+        pos_sample=self.TrainTripleList[index]
+        if self.filter:
+            sample=neg_sample_gengeration_filter(pos_sample,entity_nums,self.tripleDict)
+        else:
+            sample=neg_sample_gengeration_raw(pos_sample,entity_nums)
         return sample
 
     def __len__(self):
-        return len(self.triples[0])
-
+        return len(self.TrainTripleList)
 
 class TestingSet(data.Dataset):
     def __init__(self,file_path):
@@ -132,12 +169,6 @@ class TestingSet(data.Dataset):
 
     def __len__(self):
         return len(self.triples[0])
-
-# train_set=Trainingset('./data/WN18/train2id.csv')
-# data_loader=data.DataLoader(train_set,batch_size=10,num_workers=2)
-# for i,sample_batch in enumerate(data_loader):
-#     print('batch',i)
-#     print(sample_batch)
 
 #load triple data set and return data_size, triple_tuple_list , triple_tuple_dict
 def load_triples(file_path):
@@ -165,6 +196,21 @@ def process_list(tripleList,dataset,filename):
         fw.write(str(len(tripleList)) + '\n')
         for triple in tripleList:
             fw.write(str(triple[0]) + '\t' + str(triple[1]) + '\t' + str(triple[2]) + '\n')
+
+#combine all dataset into one triple2id list and save to file
+#In general, it is no use for the original knowledge database because it is just such a list
+def tripleSet_combination(dataset):
+    trainTotal,trainList,trainDict=load_triples('./data/'+dataset+'/train2id.txt')
+    del trainTotal,trainDict
+    testTotal,testList,testDict=load_triples('./data/'+dataset+'/test2id.txt')
+    del testTotal,testDict
+    validTotal, validList, validDict = load_triples('./data/' + dataset + '/valid2id.txt')
+    del validTotal,validDict
+    tripleList=trainList+testList+validList
+    tripleList=list(set(tripleList))
+    process_list(tripleList,dataset,'triple2id.txt')
+    return tripleList
+
 
 #calculate the statistic of datasets
 def calculate_one_or_many(dataset_name):
@@ -248,7 +294,8 @@ def getBatchList(tripleList, num_batches):
 	batchList[num_batches - 1] = tripleList[(num_batches - 1) * batchSize : ]
 	return batchList
 
-def neg_t_generation(triple,entityTotal):
+#negtive tail entity generation without filter
+def neg_t_generation_raw(triple,entityTotal):
     n_h=deepcopy(triple[0])
     n_r=deepcopy(triple[2])
     p_t=triple[1]
@@ -259,7 +306,8 @@ def neg_t_generation(triple,entityTotal):
     newtriple=(n_h,n_t,n_r)
     return newtriple
 
-def neg_h_generation(triple,entityTotal):
+#negtive head entity generation without filter
+def neg_h_generation_raw(triple,entityTotal):
     n_t=deepcopy(triple[1])
     n_r=deepcopy(triple[2])
     p_h=triple[0]
@@ -271,8 +319,8 @@ def neg_h_generation(triple,entityTotal):
     return newtriple
 #get batch raw all
 def getBatch_raw_all(tripleList,entityTotal):
-    newTripleList=[neg_h_generation(triple,entityTotal) if random.random()<0.5 else
-                   neg_t_generation(triple,entityTotal) for triple in tripleList]
+    newTripleList=[neg_h_generation_raw(triple,entityTotal) if random.random()<0.5 else
+                   neg_t_generation_raw(triple,entityTotal) for triple in tripleList]
     p_h,p_t,p_r=getThreeElements(tripleList)
     n_h,n_t,n_r=getThreeElements(newTripleList)
     sample={}
@@ -284,3 +332,72 @@ def getBatch_raw_all(tripleList,entityTotal):
     sample['n_r']=n_r
     return sample
 
+
+#negtive head entity generation with filter
+def neg_t_generation_filter(triple,entityTotal,tripleDict):
+    n_h=triple[0]
+    n_r=triple[2]
+    while True:
+        n_t=np.random.randint(entityTotal)
+        if (n_h,n_t,n_r) not in tripleDict:
+            break
+    newTriple=(n_h,n_t,n_r)
+    return newTriple
+
+def neg_h_generation_filter(triple,entityTotal,tripleDict):
+    n_t=triple[1]
+    n_r=triple[2]
+    while True:
+        n_h=np.random.randint(entityTotal)
+        if (n_h,n_t,n_r) not in tripleDict:
+            break
+    newTriple=(n_h,n_t,n_r)
+    return newTriple
+
+def getBatch_filter_all(tripleList,entityTotal,tripleDict):
+    newTripleList=[neg_h_generation_filter(triple,entityTotal,tripleDict)
+                   if np.random.uniform()<0.5 else
+                   neg_t_generation_filter(triple,entityTotal,tripleDict)
+                   for triple in tripleList]
+    p_h,p_t,p_r=getThreeElements(tripleList)
+    n_h,n_t,n_r=getThreeElements(newTripleList)
+    samples={}
+    samples['p_h'] = p_h
+    samples['p_t'] = p_t
+    samples['p_r'] = p_r
+    samples['n_h'] = n_h
+    samples['n_t'] = n_t
+    samples['n_r'] = n_r
+    return samples
+
+def getBatch_raw_random(tripleList, batchSize, entityTotal):
+    oldTripleList = random.sample(tripleList, batchSize)
+    newTripleList = [neg_h_generation_raw(triple, entityTotal) if random.random() < 0.5
+		else neg_t_generation_raw(triple, entityTotal) for triple in oldTripleList]
+    p_h, p_t ,p_r = getThreeElements(oldTripleList)
+    n_h, n_t, n_r = getThreeElements(newTripleList)
+    samples={}
+    samples['p_h'] = p_h
+    samples['p_t'] = p_t
+    samples['p_r'] = p_r
+    samples['n_h'] = n_h
+    samples['n_t'] = n_t
+    samples['n_r'] = n_r
+    return samples
+
+def getBatch_filter_random(tripleList, batchSize, entityTotal, tripleDict):
+    oldTripleList=random.sample(tripleList,batchSize)
+    newTripleList=[neg_h_generation_filter(triple,entityTotal,tripleDict)
+                   if np.random.uniform()<0.5 else
+                   neg_t_generation_filter(triple,entityTotal,tripleDict)
+                   for triple in tripleList]
+    p_h,p_t,p_r=getThreeElements(oldTripleList)
+    n_h,n_t,n_r=getThreeElements(newTripleList)
+    samples={}
+    samples['p_h'] = p_h
+    samples['p_t'] = p_t
+    samples['p_r'] = p_r
+    samples['n_h'] = n_h
+    samples['n_t'] = n_t
+    samples['n_r'] = n_r
+    return samples
